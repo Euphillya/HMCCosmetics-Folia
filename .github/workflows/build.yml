@@ -34,6 +34,11 @@ jobs:
       with:
         cache-read-only: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/version/')) }}
 
+    - name: Grant execute permission gradlew
+      run: |
+        cd HMCCosmetics-Patchs
+        bash -c "chmod +x gradlew"
+
     - name: Execute Gradle build
       run: |
         cd HMCCosmetics-Patchs
