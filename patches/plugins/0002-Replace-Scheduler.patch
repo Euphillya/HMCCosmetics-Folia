@@ -1,0 +1,729 @@
+From d2712ef927fe2c49aae6caad756002b2002294c3 Mon Sep 17 00:00:00 2001
+From: Euphyllia Bierque <bierque.euphyllia@gmail.com>
+Date: Wed, 15 Jan 2025 00:10:47 +0100
+Subject: [PATCH 2/3] Replace Scheduler
+
+---
+ .../database/types/MySQLData.java             |  12 +-
+ .../hmccosmetics/database/types/SQLData.java  |   2 +-
+ .../database/types/SQLiteData.java            |  10 +-
+ .../com/hibiscusmc/hmccosmetics/gui/Menu.java |  16 +-
+ .../hmccosmetics/gui/special/DyeMenu.java     |   4 +-
+ .../gui/type/types/TypeCosmetic.java          |   2 +-
+ .../listener/PlayerConnectionListener.java    |  10 +-
+ .../listener/PlayerGameListener.java          |  26 +-
+ .../hmccosmetics/user/CosmeticUser.java       |  10 +-
+ .../user/manager/UserEmoteModel.java          |   9 +-
+ .../user/manager/UserWardrobeManager.java     |  10 +-
+ .../hmccosmetics/util/FoliaRunnable.java      | 303 ++++++++++++++++++
+ 12 files changed, 353 insertions(+), 61 deletions(-)
+ create mode 100644 common/src/main/java/com/hibiscusmc/hmccosmetics/util/FoliaRunnable.java
+
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/MySQLData.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/MySQLData.java
+index bd385673..a01ff28c 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/MySQLData.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/MySQLData.java
+@@ -59,18 +59,12 @@ public class MySQLData extends SQLData {
+ 
+     @Override
+     public void clear(UUID uniqueId) {
+-        Bukkit.getScheduler().runTaskAsynchronously(HMCCosmeticsPlugin.getInstance(), () -> {
+-            PreparedStatement preparedSt = null;
+-            try {
+-                preparedSt = preparedStatement("DELETE FROM COSMETICDATABASE WHERE UUID=?;");
++        Bukkit.getAsyncScheduler().runNow(HMCCosmeticsPlugin.getInstance(), (task) -> {
++            try (PreparedStatement preparedSt = preparedStatement("DELETE FROM COSMETICDATABASE WHERE UUID=?;")) {
+                 preparedSt.setString(1, uniqueId.toString());
+                 preparedSt.executeUpdate();
+             } catch (SQLException e) {
+                 e.printStackTrace();
+-            } finally {
+-                try {
+-                    if (preparedSt != null) preparedSt.close();
+-                } catch (SQLException e) {}
+             }
+         });
+     }
+@@ -102,7 +96,7 @@ public class MySQLData extends SQLData {
+     }
+ 
+     public void close() {
+-        Bukkit.getScheduler().runTaskAsynchronously(HMCCosmeticsPlugin.getInstance(), () -> {
++        Bukkit.getAsyncScheduler().runNow(HMCCosmeticsPlugin.getInstance(), (task) -> {
+             try {
+                 if (connection == null) throw new NullPointerException("Connection is null");
+                 connection.close();
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLData.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLData.java
+index 4934bb95..1c5123ba 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLData.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLData.java
+@@ -63,7 +63,7 @@ public abstract class SQLData extends Data {
+             }
+         };
+         if (!HMCCosmeticsPlugin.getInstance().isDisabled()) {
+-            Bukkit.getScheduler().runTaskAsynchronously(HMCCosmeticsPlugin.getInstance(), run);
++            Bukkit.getAsyncScheduler().runNow(HMCCosmeticsPlugin.getInstance(), task -> run.run());
+         } else {
+             run.run();
+         }
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLiteData.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLiteData.java
+index c18ae726..6b9244dd 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLiteData.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/database/types/SQLiteData.java
+@@ -47,18 +47,12 @@ public class SQLiteData extends SQLData {
+     @Override
+     @SuppressWarnings("resource")
+     public void clear(UUID uniqueId) {
+-        Bukkit.getScheduler().runTaskAsynchronously(HMCCosmeticsPlugin.getInstance(), () -> {
+-            PreparedStatement preparedSt = null;
+-            try {
+-                preparedSt = preparedStatement("DELETE FROM COSMETICDATABASE WHERE UUID=?;");
++        Bukkit.getAsyncScheduler().runNow(HMCCosmeticsPlugin.getInstance(), (task) -> {
++            try (PreparedStatement preparedSt = preparedStatement("DELETE FROM COSMETICDATABASE WHERE UUID=?;")) {
+                 preparedSt.setString(1, uniqueId.toString());
+                 preparedSt.executeUpdate();
+             } catch (SQLException e) {
+                 e.printStackTrace();
+-            } finally {
+-                try {
+-                    if (preparedSt != null) preparedSt.close();
+-                } catch (SQLException e) {}
+             }
+         });
+     }
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/Menu.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/Menu.java
+index 4da56520..02c1f3fd 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/Menu.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/Menu.java
+@@ -146,37 +146,37 @@ public class Menu {
+ 
+         gui.setDefaultClickAction(event -> event.setCancelled(true));
+ 
+-        AtomicInteger taskid = new AtomicInteger(-1);
++        java.util.concurrent.atomic.AtomicReference<io.papermc.paper.threadedregions.scheduler.ScheduledTask> taskid = new java.util.concurrent.atomic.AtomicReference<>();
+         gui.setOpenGuiAction(event -> {
+             Runnable run = () -> {
+-                if (gui.getInventory().getViewers().isEmpty() && taskid.get() != -1) {
+-                    Bukkit.getScheduler().cancelTask(taskid.get());
++                if (gui.getInventory().getViewers().isEmpty() && taskid.get() != null) {
++                    taskid.get().cancel();
+                 }
+ 
+                 updateMenu(user, gui);
+             };
+ 
+             if (refreshRate != -1) {
+-                taskid.set(Bukkit.getScheduler().scheduleSyncRepeatingTask(HMCCosmeticsPlugin.getInstance(), run, 0, refreshRate));
++                taskid.set(event.getPlayer().getScheduler().runAtFixedRate(HMCCosmeticsPlugin.getInstance(), task -> run.run(), null, 1, refreshRate));
+             } else {
+                 run.run();
+             }
+         });
+ 
+         gui.setCloseGuiAction(event -> {
+-            if (taskid.get() != -1) Bukkit.getScheduler().cancelTask(taskid.get());
++            if (taskid.get() != null) taskid.get().cancel();
+         });
+ 
+         // API
+         PlayerMenuOpenEvent event = new PlayerMenuOpenEvent(user, this);
+-        Bukkit.getScheduler().runTask(HMCCosmeticsPlugin.getInstance(), () -> Bukkit.getPluginManager().callEvent(event));
++        player.getScheduler().run(HMCCosmeticsPlugin.getInstance(), (task) -> Bukkit.getPluginManager().callEvent(event), null);
+         if (event.isCancelled()) return;
+         // Internal
+ 
+-        Bukkit.getScheduler().runTask(HMCCosmeticsPlugin.getInstance(), () -> {
++        player.getScheduler().run(HMCCosmeticsPlugin.getInstance(), (task) -> {
+             gui.open(player);
+             updateMenu(user, gui); // fixes shading? I know I do this twice but it's easier than writing a whole new class to deal with this shit
+-        });
++        }, null);
+     }
+ 
+     private void updateMenu(CosmeticUser user, Gui gui) {
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/special/DyeMenu.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/special/DyeMenu.java
+index ddcdbe63..ab1eb5e6 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/special/DyeMenu.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/special/DyeMenu.java
+@@ -69,9 +69,9 @@ public class DyeMenu {
+         Player player = user.getPlayer();
+         user.addPlayerCosmetic(cosmetic, color);
+         player.setItemOnCursor(new ItemStack(Material.AIR));
+-        Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++        player.getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+             player.closeInventory();
+             user.updateCosmetic(cosmetic.getSlot());
+-        }, 2);
++        }, null, 2);
+     }
+ }
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/type/types/TypeCosmetic.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/type/types/TypeCosmetic.java
+index 7c927c3d..5fb1cda7 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/type/types/TypeCosmetic.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/gui/type/types/TypeCosmetic.java
+@@ -120,7 +120,7 @@ public class TypeCosmetic extends Type {
+         Runnable run = () -> user.updateCosmetic(cosmetic.getSlot());
+         if (cosmetic instanceof CosmeticArmorType) {
+             if (((CosmeticArmorType) cosmetic).getEquipSlot().equals(EquipmentSlot.OFF_HAND)) {
+-                Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), run, 1);
++                user.getEntity().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), task -> run.run(), null, 1);
+             }
+         }
+         run.run();
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerConnectionListener.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerConnectionListener.java
+index ff5b4051..dbfd9d90 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerConnectionListener.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerConnectionListener.java
+@@ -42,23 +42,23 @@ public class PlayerConnectionListener implements Listener {
+             UUID uuid = event.getPlayer().getUniqueId();
+             Database.get(uuid).thenAccept(data -> {
+                 if (data == null) return;
+-                Bukkit.getScheduler().runTask(HMCCosmeticsPlugin.getInstance(), () -> {
++                event.getPlayer().getScheduler().run(HMCCosmeticsPlugin.getInstance(), (task) -> {
+                     CosmeticUser cosmeticUser = new CosmeticUser(uuid, data);
+                     CosmeticUsers.addUser(cosmeticUser);
+                     MessagesUtil.sendDebugMessages("Run User Join for " + uuid);
+ 
+                     // And finally, launch an update for the cosmetics they have.
+-                    Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++                    event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task1) -> {
+                         if (cosmeticUser.getPlayer() == null) return;
+                         cosmeticUser.updateCosmetic();
+-                    }, 4);
+-                });
++                    }, null, 4);
++                }, null);
+             });
+         };
+ 
+         if (DatabaseSettings.isEnabledDelay()) {
+             MessagesUtil.sendDebugMessages("Delay Enabled with " + DatabaseSettings.getDelayLength() + " ticks");
+-            Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), run, DatabaseSettings.getDelayLength());
++            event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), task -> run.run(), null, DatabaseSettings.getDelayLength());
+         } else {
+             run.run();
+         }
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java
+index 9cec8163..b8f46afa 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java
+@@ -93,9 +93,9 @@ public class PlayerGameListener implements Listener {
+         CosmeticSlot cosmeticSlot = HMCCInventoryUtils.BukkitCosmeticSlot(slot);
+         if (cosmeticSlot == null) return;
+         if (!user.hasCosmeticInSlot(cosmeticSlot)) return;
+-        Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++        event.getWhoClicked().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+             user.updateCosmetic(cosmeticSlot);
+-        }, 1);
++        }, null, 1);
+         MessagesUtil.sendDebugMessages("Event fired, updated cosmetic " + cosmeticSlot);
+     }
+ 
+@@ -128,7 +128,7 @@ public class PlayerGameListener implements Listener {
+             user.leaveWardrobe();
+         }
+ 
+-        Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++        event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+             if (user.getEntity() == null || user.isInWardrobe()) return; // fixes disconnecting when in wardrobe (the entity stuff)
+             if (Settings.getDisabledWorlds().contains(user.getEntity().getLocation().getWorld().getName())) {
+                 user.hideCosmetics(CosmeticUser.HiddenReason.WORLD);
+@@ -142,7 +142,7 @@ public class PlayerGameListener implements Listener {
+                 user.respawnBalloon();
+             }
+             user.updateCosmetic();
+-        }, 2);
++        }, null, 2);
+ 
+         if (event.getCause().equals(PlayerTeleportEvent.TeleportCause.NETHER_PORTAL) || event.getCause().equals(PlayerTeleportEvent.TeleportCause.END_PORTAL)) return;
+         if (user.getUserEmoteManager().isPlayingEmote()) {
+@@ -169,10 +169,10 @@ public class PlayerGameListener implements Listener {
+         if (user.hasCosmeticInSlot(CosmeticSlot.BALLOON)) {
+             user.despawnBalloon();
+ 
+-            Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++            event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+                 user.spawnBalloon((CosmeticBalloonType) user.getCosmetic(CosmeticSlot.BALLOON));
+                 user.updateCosmetic();
+-            }, 4);
++            }, null, 4);
+         }
+     }
+ 
+@@ -267,10 +267,10 @@ public class PlayerGameListener implements Listener {
+             return;
+         }
+ 
+-        Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++        event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+             MessagesUtil.sendDebugMessages("PlayerItemDamageEvent UpdateCosmetic " + cosmeticSlot);
+             user.updateCosmetic(cosmeticSlot);
+-        }, 2);
++        }, null, 2);
+     }
+ 
+     @EventHandler(priority = EventPriority.LOW)
+@@ -284,14 +284,14 @@ public class PlayerGameListener implements Listener {
+             event.setCancelled(true);
+             return;
+         }
+-        Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++        event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+             if (user.getEntity() == null) return; // Player has likely logged off
+             user.updateCosmetic(CosmeticSlot.OFFHAND);
+             List<Player> viewers = HMCCPacketManager.getViewers(user.getEntity().getLocation());
+             if (viewers.isEmpty()) return;
+             viewers.remove(user.getPlayer());
+             PacketManager.equipmentSlotUpdate(user.getEntity().getEntityId(), EquipmentSlot.HAND, event.getPlayer().getInventory().getItemInMainHand(), viewers);
+-        }, 2);
++        }, null, 2);
+     }
+ 
+     @EventHandler(priority = EventPriority.NORMAL)
+@@ -326,9 +326,9 @@ public class PlayerGameListener implements Listener {
+ 
+         //NMSHandlers.getHandler().slotUpdate(event.getPlayer(), event.getPreviousSlot());
+         if (user.hasCosmeticInSlot(CosmeticSlot.MAINHAND)) {
+-            Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++            event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+                 user.updateCosmetic(CosmeticSlot.MAINHAND);
+-            }, 2);
++            }, null, 2);
+         }
+ 
+         // #84, Riptides mess with backpacks
+@@ -480,7 +480,7 @@ public class PlayerGameListener implements Listener {
+                 CosmeticSlot cosmeticSlot = HMCCInventoryUtils.NMSCosmeticSlot(slotClicked);
+                 if (cosmeticSlot == null) return;
+                 if (!user.hasCosmeticInSlot(cosmeticSlot)) return;
+-                Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> user.updateCosmetic(cosmeticSlot), 1);
++                event.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> user.updateCosmetic(cosmeticSlot), null, 1);
+                 MessagesUtil.sendDebugMessages("Packet fired, updated cosmetic " + cosmeticSlot);
+             }
+         });
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java
+index 8b44d3dc..4191d5f9 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java
+@@ -49,7 +49,7 @@ public class CosmeticUser {
+ 
+     @Getter
+     private final UUID uniqueId;
+-    private int taskId;
++    private io.papermc.paper.threadedregions.scheduler.ScheduledTask taskId;
+     private final HashMap<CosmeticSlot, Cosmetic> playerCosmetics = new HashMap<>();
+     private UserWardrobeManager userWardrobeManager;
+     private UserBalloonManager userBalloonManager;
+@@ -85,13 +85,13 @@ public class CosmeticUser {
+ 
+         int tickPeriod = Settings.getTickPeriod();
+         if (tickPeriod > 0) {
+-            BukkitTask task = Bukkit.getScheduler().runTaskTimer(HMCCosmeticsPlugin.getInstance(), run, 0, tickPeriod);
+-            taskId = task.getTaskId();
++            io.papermc.paper.threadedregions.scheduler.ScheduledTask task = Bukkit.getGlobalRegionScheduler().runAtFixedRate(HMCCosmeticsPlugin.getInstance(), task1 -> run.run(), 0, tickPeriod);
++            taskId = task;
+         }
+     }
+ 
+     public void destroy() {
+-        Bukkit.getScheduler().cancelTask(taskId);
++        taskId.cancel();
+         despawnBackpack();
+         despawnBalloon();
+     }
+@@ -457,7 +457,7 @@ public class CosmeticUser {
+                     WardrobeSettings.getTransitionStay(),
+                     WardrobeSettings.getTransitionFadeOut()
+             );
+-            Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++            Bukkit.getGlobalRegionScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+                 userWardrobeManager.end();
+                 userWardrobeManager = null;
+             }, WardrobeSettings.getTransitionDelay());
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserEmoteModel.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserEmoteModel.java
+index 0451ce53..81fdb929 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserEmoteModel.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserEmoteModel.java
+@@ -103,9 +103,10 @@ public class UserEmoteModel extends PlayerModel {
+     public void stopAnimation() {
+         emotePlaying = null;
+         despawn();
+-        Bukkit.getScheduler().runTask(HMCCosmeticsPlugin.getInstance(), () -> {
+-            Player player = user.getPlayer();
+-            if (player == null) return;
++        Player player = user.getPlayer();
++        if (player == null) return;
++        player.getScheduler().run(HMCCosmeticsPlugin.getInstance(), (task) -> {
++
+ 
+             List<Player> viewer = Collections.singletonList(player);
+             List<Player> outsideViewers = HMCCPacketManager.getViewers(player.getLocation());
+@@ -125,7 +126,7 @@ public class UserEmoteModel extends PlayerModel {
+             user.getUserEmoteManager().despawnTextEntity();
+             user.showPlayer();
+             user.showCosmetics(CosmeticUser.HiddenReason.EMOTE);
+-        });
++        }, null);
+     }
+ 
+     public boolean isPlayingAnimation() {
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java
+index 374851b3..1f7ceebe 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java
+@@ -128,13 +128,13 @@ public class UserWardrobeManager {
+             HMCCPacketManager.sendFakePlayerInfoPacket(player, NPC_ID, WARDROBE_UUID, npcName, viewer);
+ 
+             // NPC 2
+-            Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), () -> {
++            user.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), (task) -> {
+                 if (!user.isInWardrobe()) return; // If a player exits the wardrobe right away, no need to spawn the NPC
+                 HMCCPacketManager.sendFakePlayerSpawnPacket(npcLocation, WARDROBE_UUID, NPC_ID, viewer);
+                 HMCCPacketManager.sendPlayerOverlayPacket(NPC_ID, viewer);
+                 MessagesUtil.sendDebugMessages("Spawned Fake Player on " + npcLocation);
+                 NMSHandlers.getHandler().getPacketHandler().sendScoreboardHideNamePacket(player, npcName);
+-            }, 4);
++            }, null, 4);
+ 
+             // Location
+             HMCCPacketManager.sendLookPacket(NPC_ID, npcLocation, viewer);
+@@ -195,7 +195,7 @@ public class UserWardrobeManager {
+                     WardrobeSettings.getTransitionStay(),
+                     WardrobeSettings.getTransitionFadeOut()
+             );
+-            Bukkit.getScheduler().runTaskLater(HMCCosmeticsPlugin.getInstance(), run, WardrobeSettings.getTransitionDelay());
++            user.getPlayer().getScheduler().runDelayed(HMCCosmeticsPlugin.getInstance(), task -> run.run(), null, WardrobeSettings.getTransitionDelay());
+         } else {
+             run.run();
+         }
+@@ -288,7 +288,7 @@ public class UserWardrobeManager {
+     private void update() {
+         final AtomicInteger data = new AtomicInteger();
+ 
+-        BukkitRunnable runnable = new BukkitRunnable() {
++        com.hibiscusmc.hmccosmetics.util.FoliaRunnable runnable = new com.hibiscusmc.hmccosmetics.util.FoliaRunnable(user.getPlayer().getScheduler(), null) {
+             @Override
+             public void run() {
+                 Player player = user.getPlayer();
+@@ -344,7 +344,7 @@ public class UserWardrobeManager {
+             }
+         };
+ 
+-        runnable.runTaskTimer(HMCCosmeticsPlugin.getInstance(), 0, 2);
++        runnable.runAtFixedRate(HMCCosmeticsPlugin.getInstance(), 0, 2);
+     }
+ 
+     public enum WardrobeStatus {
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/util/FoliaRunnable.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/util/FoliaRunnable.java
+new file mode 100644
+index 00000000..4338ee9c
+--- /dev/null
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/util/FoliaRunnable.java
+@@ -0,0 +1,303 @@
++package com.hibiscusmc.hmccosmetics.util;
++
++import io.papermc.paper.threadedregions.scheduler.*;
++import org.bukkit.Location;
++import org.bukkit.World;
++import org.bukkit.plugin.Plugin;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.concurrent.TimeUnit;
++
++/**
++ * Represents an abstract runnable that can be scheduled using various Folia-specific schedulers:
++ * <ul>
++ *     <li>{@link AsyncScheduler}</li>
++ *     <li>{@link EntityScheduler}</li>
++ *     <li>{@link GlobalRegionScheduler}</li>
++ *     <li>{@link RegionScheduler}</li>
++ * </ul>
++ * <p>
++ * Depending on which scheduler you use, tasks will be executed in different contexts (asynchronously,
++ * on an entity's region, on the global region, or on a specific region).
++ * </p>
++ */
++public abstract class FoliaRunnable implements Runnable {
++
++    private ScheduledTask task;
++
++    // Schedulers
++    private @Nullable AsyncScheduler asyncScheduler;
++    private @Nullable EntityScheduler entityScheduler;
++    private @Nullable GlobalRegionScheduler globalRegionScheduler;
++    private @Nullable RegionScheduler regionScheduler;
++
++    // For async scheduling
++    private @Nullable TimeUnit timeUnit;
++
++    // For entity scheduling (optional retired callback)
++    private @Nullable Runnable entityRetired;
++
++    // For region scheduling by Location or chunk coordinates
++    private @Nullable Location location;
++    private @Nullable World world;
++    private int chunkX;
++    private int chunkZ;
++
++    /**
++     * Constructs a new {@code FoliaRunnable} that will be executed asynchronously by the provided scheduler.
++     *
++     * @param scheduler an {@link AsyncScheduler} to schedule the task asynchronously
++     * @param timeUnit  the time unit to use for delayed/periodic tasks
++     */
++    public FoliaRunnable(@NotNull AsyncScheduler scheduler, @Nullable TimeUnit timeUnit) {
++        this.asyncScheduler = scheduler;
++        this.timeUnit = timeUnit;
++    }
++
++    /**
++     * Constructs a new {@code FoliaRunnable} that will be executed on an entity's region.
++     * An optional {@code retired} callback can be provided if the entity is removed before execution.
++     *
++     * @param scheduler an {@link EntityScheduler} to schedule the task on an entity's region
++     * @param retired   a callback invoked if the entity is removed before the task can run
++     */
++    public FoliaRunnable(@NotNull EntityScheduler scheduler, @Nullable Runnable retired) {
++        this.entityScheduler = scheduler;
++        this.entityRetired = retired;
++    }
++
++    /**
++     * Constructs a new {@code FoliaRunnable} that will be executed on the global region.
++     *
++     * @param scheduler a {@link GlobalRegionScheduler} for scheduling on the global region
++     */
++    public FoliaRunnable(@NotNull GlobalRegionScheduler scheduler) {
++        this.globalRegionScheduler = scheduler;
++    }
++
++    /**
++     * Constructs a new {@code FoliaRunnable} that will be executed on the region
++     * owning the given {@link Location}.
++     *
++     * @param scheduler a {@link RegionScheduler} for scheduling on a specific region
++     * @param location  a {@link Location} to determine the owning region
++     */
++    public FoliaRunnable(@NotNull RegionScheduler scheduler, @Nullable Location location) {
++        this.regionScheduler = scheduler;
++        this.location = location;
++    }
++
++    /**
++     * Constructs a new {@code FoliaRunnable} that will be executed on the region
++     * owning the given chunk coordinates.
++     *
++     * @param scheduler a {@link RegionScheduler} for scheduling on a specific region
++     * @param world     the {@link World} containing the chunk
++     * @param chunkX    the chunk X coordinate
++     * @param chunkZ    the chunk Z coordinate
++     */
++    public FoliaRunnable(@NotNull RegionScheduler scheduler, @NotNull World world, int chunkX, int chunkZ) {
++        this.regionScheduler = scheduler;
++        this.world = world;
++        this.chunkX = chunkX;
++        this.chunkZ = chunkZ;
++    }
++
++    /**
++     * Checks if this task has been cancelled.
++     *
++     * @return {@code true} if the task has been cancelled
++     * @throws IllegalStateException if the task has not been scheduled yet
++     */
++    public boolean isCancelled() throws IllegalStateException {
++        checkScheduled();
++        return task.isCancelled();
++    }
++
++    /**
++     * Cancels this scheduled task. Future executions will be halted,
++     * but if the task is already running, it will not stop immediately.
++     *
++     * @throws IllegalStateException if the task has not been scheduled yet
++     */
++    public void cancel() throws IllegalStateException {
++        checkScheduled();
++        task.cancel();
++    }
++
++    /**
++     * Schedules this {@code FoliaRunnable} to run as soon as possible (the next tick in a region-based scheduler,
++     * or immediately if it's an asynchronous scheduler).
++     *
++     * @param plugin the reference to the plugin scheduling the task
++     * @return the {@link ScheduledTask} representing this scheduled runnable
++     * @throws IllegalArgumentException      if the plugin is {@code null}
++     * @throws IllegalStateException         if this runnable has already been scheduled
++     * @throws UnsupportedOperationException if the scheduler type is unsupported
++     */
++    @NotNull
++    public ScheduledTask run(@NotNull Plugin plugin) throws IllegalArgumentException, IllegalStateException {
++        if (plugin == null) {
++            throw new IllegalArgumentException("Plugin cannot be null.");
++        }
++        checkNotYetScheduled();
++
++        if (this.globalRegionScheduler != null) {
++            // Global region
++            return setupTask(this.globalRegionScheduler.run(plugin, scheduledTask -> FoliaRunnable.this.run()));
++        } else if (this.entityScheduler != null) {
++            // Entity region
++            return setupTask(this.entityScheduler.run(plugin, scheduledTask -> FoliaRunnable.this.run(), entityRetired));
++        } else if (this.regionScheduler != null) {
++            // Region by location or chunk coords
++            if (this.location != null) {
++                return setupTask(this.regionScheduler.run(plugin, location, scheduledTask -> FoliaRunnable.this.run()));
++            } else if (this.world != null) {
++                return setupTask(this.regionScheduler.run(plugin, world, chunkX, chunkZ, scheduledTask -> FoliaRunnable.this.run()));
++            } else {
++                throw new UnsupportedOperationException("Cannot schedule on region: no location or (world, chunkX, chunkZ) provided.");
++            }
++        } else if (this.asyncScheduler != null) {
++            // Asynchronous
++            return setupTask(this.asyncScheduler.runNow(plugin, scheduledTask -> FoliaRunnable.this.run()));
++        } else {
++            throw new UnsupportedOperationException("No scheduler available for this FoliaRunnable.");
++        }
++    }
++
++    /**
++     * Schedules this {@code FoliaRunnable} to be executed after a certain number of server ticks have passed.
++     *
++     * @param plugin the plugin responsible for scheduling this task
++     * @param delay  the delay in server ticks before execution; values less than 1 are treated as 1
++     * @return the {@link ScheduledTask} representing this scheduled runnable
++     * @throws IllegalArgumentException      if the plugin is {@code null}
++     * @throws IllegalStateException         if this runnable has already been scheduled
++     * @throws UnsupportedOperationException if the scheduler type or context is unsupported
++     */
++    @NotNull
++    public ScheduledTask runDelayed(@NotNull Plugin plugin, long delay) {
++        if (plugin == null) {
++            throw new IllegalArgumentException("Plugin cannot be null.");
++        }
++        checkNotYetScheduled();
++
++        delay = Math.max(1, delay);
++
++        if (this.globalRegionScheduler != null) {
++            // Global region
++            return setupTask(this.globalRegionScheduler.runDelayed(plugin, scheduledTask -> FoliaRunnable.this.run(), delay));
++        } else if (this.entityScheduler != null) {
++            // Entity region
++            return setupTask(this.entityScheduler.runDelayed(plugin, scheduledTask -> FoliaRunnable.this.run(), entityRetired, delay));
++        } else if (this.regionScheduler != null) {
++            // Region by location or chunk coords
++            if (this.location != null) {
++                return setupTask(this.regionScheduler.runDelayed(plugin, location, scheduledTask -> FoliaRunnable.this.run(), delay));
++            } else if (this.world != null) {
++                return setupTask(this.regionScheduler.runDelayed(plugin, world, chunkX, chunkZ, scheduledTask -> FoliaRunnable.this.run(), delay));
++            } else {
++                throw new UnsupportedOperationException("Cannot schedule delayed on region: no location or (world, chunkX, chunkZ) provided.");
++            }
++        } else if (this.asyncScheduler != null && this.timeUnit != null) {
++            // Asynchronous
++            return setupTask(this.asyncScheduler.runDelayed(plugin, scheduledTask -> FoliaRunnable.this.run(), delay, timeUnit));
++        } else {
++            throw new UnsupportedOperationException("No scheduler available or time unit not set for this FoliaRunnable.");
++        }
++    }
++
++    /**
++     * Schedules this {@code FoliaRunnable} to run repeatedly until cancelled, starting
++     * after the specified delay and repeating at the specified period.
++     *
++     * @param plugin the plugin responsible for scheduling this task
++     * @param delay  the initial delay in ticks before first execution; values less than 1 are treated as 1
++     * @param period the interval in ticks between consecutive executions; values less than 1 are treated as 1
++     * @return the {@link ScheduledTask} representing this scheduled runnable
++     * @throws IllegalArgumentException      if the plugin is {@code null}
++     * @throws IllegalStateException         if this runnable has already been scheduled
++     * @throws UnsupportedOperationException if the scheduler type or context is unsupported
++     */
++    @NotNull
++    public ScheduledTask runAtFixedRate(@NotNull Plugin plugin, long delay, long period) {
++        if (plugin == null) {
++            throw new IllegalArgumentException("Plugin cannot be null.");
++        }
++        checkNotYetScheduled();
++
++        delay = Math.max(1, delay);
++        period = Math.max(1, period);
++
++        if (this.globalRegionScheduler != null) {
++            // Global region
++            return setupTask(this.globalRegionScheduler.runAtFixedRate(plugin, scheduledTask -> FoliaRunnable.this.run(), delay, period));
++        } else if (this.entityScheduler != null) {
++            // Entity region
++            return setupTask(this.entityScheduler.runAtFixedRate(plugin, scheduledTask -> FoliaRunnable.this.run(), entityRetired, delay, period));
++        } else if (this.regionScheduler != null) {
++            // Region by location or chunk coords
++            if (this.location != null) {
++                return setupTask(this.regionScheduler.runAtFixedRate(plugin, location, scheduledTask -> FoliaRunnable.this.run(), delay, period));
++            } else if (this.world != null) {
++                return setupTask(this.regionScheduler.runAtFixedRate(plugin, world, chunkX, chunkZ, scheduledTask -> FoliaRunnable.this.run(), delay, period));
++            } else {
++                throw new UnsupportedOperationException("Cannot schedule fixed rate on region: no location or (world, chunkX, chunkZ) provided.");
++            }
++        } else if (this.asyncScheduler != null && this.timeUnit != null) {
++            // Asynchronous
++            return setupTask(this.asyncScheduler.runAtFixedRate(plugin, scheduledTask -> FoliaRunnable.this.run(), delay, period, timeUnit));
++        } else {
++            throw new UnsupportedOperationException("No scheduler available or time unit not set for this FoliaRunnable.");
++        }
++    }
++
++    /**
++     * Retrieves the ID of the scheduled task once it has been scheduled.
++     *
++     * @return the ID of the scheduled task
++     * @throws IllegalStateException if the task has not been scheduled yet
++     */
++    public int getTaskId() throws IllegalStateException {
++        checkScheduled();
++        return task.hashCode();
++    }
++
++    /**
++     * Validates that this {@code FoliaRunnable} has already been scheduled,
++     * throwing an exception otherwise.
++     *
++     * @throws IllegalStateException if no {@link ScheduledTask} is assigned yet
++     */
++    private void checkScheduled() {
++        if (task == null) {
++            throw new IllegalStateException("This FoliaRunnable has not been scheduled yet.");
++        }
++    }
++
++    /**
++     * Validates that this {@code FoliaRunnable} has not been scheduled yet,
++     * throwing an exception otherwise.
++     *
++     * @throws IllegalStateException if this {@code FoliaRunnable} is already scheduled
++     */
++    private void checkNotYetScheduled() {
++        if (task != null) {
++            throw new IllegalStateException("This FoliaRunnable has already been scheduled as task ID: " + task.hashCode());
++        }
++    }
++
++    /**
++     * Internal helper method to store the returned {@link ScheduledTask} reference
++     * in this {@code FoliaRunnable} and return it back.
++     *
++     * @param task the {@link ScheduledTask} returned by the scheduler
++     * @return the same {@link ScheduledTask} reference
++     */
++    @NotNull
++    private ScheduledTask setupTask(final ScheduledTask task) {
++        this.task = task;
++        return task;
++    }
++}
+\ No newline at end of file
+-- 
+2.47.1.windows.1
+

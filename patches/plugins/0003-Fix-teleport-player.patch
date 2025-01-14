@@ -1,0 +1,108 @@
+From 29befede1bada2309650163757e6e10aa8a18f19 Mon Sep 17 00:00:00 2001
+From: Euphyllia Bierque <bierque.euphyllia@gmail.com>
+Date: Wed, 15 Jan 2025 00:13:38 +0100
+Subject: [PATCH 3/3] Fix teleport player
+
+---
+ .../hmccosmetics/cosmetic/types/CosmeticBalloonType.java  | 2 +-
+ .../hmccosmetics/listener/PlayerGameListener.java         | 2 +-
+ .../com/hibiscusmc/hmccosmetics/user/CosmeticUser.java    | 2 +-
+ .../hmccosmetics/user/manager/UserBalloonManager.java     | 2 +-
+ .../hmccosmetics/user/manager/UserWardrobeManager.java    | 8 ++++----
+ 5 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/cosmetic/types/CosmeticBalloonType.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/cosmetic/types/CosmeticBalloonType.java
+index 72d4f465..459d7bca 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/cosmetic/types/CosmeticBalloonType.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/cosmetic/types/CosmeticBalloonType.java
+@@ -73,7 +73,7 @@ public class CosmeticBalloonType extends Cosmetic {
+         List<Player> viewer = HMCCPacketManager.getViewers(entity.getLocation());
+ 
+         if (entity.getLocation().getWorld() != userBalloonManager.getLocation().getWorld()) {
+-            userBalloonManager.getModelEntity().teleport(newLocation);
++            userBalloonManager.getModelEntity().teleportAsync(newLocation);
+             HMCCPacketManager.sendTeleportPacket(userBalloonManager.getPufferfishBalloonId(), newLocation, false, viewer);
+             return;
+         }
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java
+index b8f46afa..44536e6a 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/listener/PlayerGameListener.java
+@@ -390,7 +390,7 @@ public class PlayerGameListener implements Listener {
+             user.getBalloonManager().getPufferfish().spawnPufferfish(npclocation.clone().add(cosmetic.getBalloonOffset()), viewer);
+             HMCCPacketManager.sendLeashPacket(user.getBalloonManager().getPufferfishBalloonId(), user.getWardrobeManager().getNPC_ID(), viewer);
+             HMCCPacketManager.sendTeleportPacket(user.getBalloonManager().getPufferfishBalloonId(), npclocation, false, viewer);
+-            user.getBalloonManager().getModelEntity().teleport(npclocation);
++            user.getBalloonManager().getModelEntity().teleportAsync(npclocation);
+         }
+     }
+ 
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java
+index 4191d5f9..79e7c4d5 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/CosmeticUser.java
+@@ -501,7 +501,7 @@ public class CosmeticUser {
+         org.bukkit.entity.Entity entity = getEntity();
+ 
+         UserBalloonManager userBalloonManager1 = new UserBalloonManager(this, entity.getLocation());
+-        userBalloonManager1.getModelEntity().teleport(entity.getLocation().add(cosmeticBalloonType.getBalloonOffset()));
++        userBalloonManager1.getModelEntity().teleportAsync(entity.getLocation().add(cosmeticBalloonType.getBalloonOffset()));
+ 
+         userBalloonManager1.spawnModel(cosmeticBalloonType, getCosmeticColor(cosmeticBalloonType.getSlot()));
+         userBalloonManager1.addPlayerToModel(this, cosmeticBalloonType, getCosmeticColor(cosmeticBalloonType.getSlot()));
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserBalloonManager.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserBalloonManager.java
+index 89b24202..733c0662 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserBalloonManager.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserBalloonManager.java
+@@ -177,7 +177,7 @@ public class UserBalloonManager {
+     }
+ 
+     public void setLocation(Location location) {
+-        this.getModelEntity().teleport(location);
++        this.getModelEntity().teleportAsync(location);
+     }
+ 
+     public void setVelocity(Vector vector) {
+diff --git a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java
+index 1f7ceebe..27ceb10a 100644
+--- a/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java
++++ b/common/src/main/java/com/hibiscusmc/hmccosmetics/user/manager/UserWardrobeManager.java
+@@ -115,7 +115,7 @@ public class UserWardrobeManager {
+             HMCCPacketManager.sendLookPacket(ARMORSTAND_ID, viewingLocation, viewer);
+ 
+             // Player
+-            user.getPlayer().teleport(viewingLocation, PlayerTeleportEvent.TeleportCause.PLUGIN);
++            user.getPlayer().teleportAsync(viewingLocation, PlayerTeleportEvent.TeleportCause.PLUGIN);
+             user.getPlayer().setInvisible(true);
+             HMCCPacketManager.gamemodeChangePacket(player, 3);
+             HMCCPacketManager.sendCameraPacket(ARMORSTAND_ID, viewer);
+@@ -161,7 +161,7 @@ public class UserWardrobeManager {
+ 
+                     Location balloonLocation = npcLocation.clone().add(cosmetic.getBalloonOffset());
+                     HMCCPacketManager.sendTeleportPacket(user.getBalloonManager().getPufferfishBalloonId(), balloonLocation, false, viewer);
+-                    user.getBalloonManager().getModelEntity().teleport(balloonLocation);
++                    user.getBalloonManager().getModelEntity().teleportAsync(balloonLocation);
+                     user.getBalloonManager().setLocation(balloonLocation);
+                 }
+             }
+@@ -260,7 +260,7 @@ public class UserWardrobeManager {
+                 //PacketManager.sendLeashPacket(VIEWER.getBalloonEntity().getPufferfishBalloonId(), player.getEntityId(), viewer);
+             }
+ 
+-            player.teleport(Objects.requireNonNullElseGet(exitLocation, () -> player.getWorld().getSpawnLocation()), PlayerTeleportEvent.TeleportCause.PLUGIN);
++            player.teleportAsync(Objects.requireNonNullElseGet(exitLocation, () -> player.getWorld().getSpawnLocation()), PlayerTeleportEvent.TeleportCause.PLUGIN);
+ 
+             HashMap<EquipmentSlot, ItemStack> items = new HashMap<>();
+             for (EquipmentSlot slot : HMCCInventoryUtils.getPlayerArmorSlots()) {
+@@ -328,7 +328,7 @@ public class UserWardrobeManager {
+                 if (user.hasCosmeticInSlot(CosmeticSlot.BALLOON) && user.isBalloonSpawned()) {
+                     // The two lines below broke, solved by listening to PlayerCosmeticPostEquipEvent
+                     //PacketManager.sendTeleportPacket(user.getBalloonManager().getPufferfishBalloonId(), npcLocation.add(Settings.getBalloonOffset()), false, viewer);
+-                    //user.getBalloonManager().getModelEntity().teleport(npcLocation.add(Settings.getBalloonOffset()));
++                    //user.getBalloonManager().getModelEntity().telepaort(npcLocation.add(Settings.getBalloonOffset()));
+                     user.getBalloonManager().sendRemoveLeashPacket(outsideViewers);
+                     if (user.getBalloonManager().getBalloonType() != UserBalloonManager.BalloonType.MODELENGINE) {
+                         HMCCPacketManager.sendEntityDestroyPacket(user.getBalloonManager().getModelId(), outsideViewers);
+-- 
+2.47.1.windows.1
+
